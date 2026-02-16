@@ -1,24 +1,12 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import { TabNavigation } from "@/components/tab-navigation";
-import { UserMenu } from "@/components/user-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { DollarSign } from "lucide-react";
 
-export default async function ProtectedLayout({
+export default function ProtectedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-lg">
@@ -36,7 +24,6 @@ export default async function ProtectedLayout({
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <UserMenu email={user.email ?? ""} />
           </div>
         </div>
       </header>

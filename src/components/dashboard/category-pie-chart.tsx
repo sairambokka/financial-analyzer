@@ -1,18 +1,19 @@
 "use client";
 
-
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { ResponsivePie } from "@nivo/pie";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
+import { useTheme } from "next-themes";
 import type { CategoryBreakdown } from "@/lib/analytics";
 
 interface CategoryPieChartProps {
-  data: CategoryBreakdown[];
+  expenseData: CategoryBreakdown[];
+  incomeData: CategoryBreakdown[];
 }
 
 // Custom tooltip component for Nivo
-const CustomTooltip = ({ datum }: { datum: any }) => {
+const CustomTooltip = ({ datum }: { datum: { id: string | number; value: number; color: string } }) => {
   return (
     <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-lg">
       <div className="flex items-center gap-2">
@@ -29,7 +30,23 @@ const CustomTooltip = ({ datum }: { datum: any }) => {
   );
 };
 
-export function CategoryPieChart({ data: rawData }: CategoryPieChartProps) {
+export function CategoryPieChart({ expenseData: rawExpenseData, incomeData: rawIncomeData }: CategoryPieChartProps) {
+  const [mode, setMode] = useState<"expenses" | "income">("expenses");
+  const { theme, systemTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const rawData = mode === "expenses" ? rawExpenseData : rawIncomeData;
+
+  // Determine if dark mode is active
+  const isDark = mounted && (theme === "dark" || (theme === "system" && systemTheme === "dark"));
+  // Use very bright colors for dark mode visibility
+  const textColor = isDark ? "#ffffff" : "#1f2937";
+  const linkColor = isDark ? "#e5e7eb" : "#6b7280";
+
   // Group small categories to avoid cluttering the chart
   const data = useMemo(() => {
     if (rawData.length <= 10) {
@@ -67,12 +84,34 @@ export function CategoryPieChart({ data: rawData }: CategoryPieChartProps) {
   if (data.length === 0) {
     return (
       <Card className="flex-1">
-        <CardHeader>
-          <CardTitle className="text-sm">Spending by Category</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+          <CardTitle className="text-sm">Category Breakdown</CardTitle>
+          <div className="inline-flex rounded-lg border border-border p-1">
+            <button
+              onClick={() => setMode("expenses")}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "expenses"
+                  ? "bg-accent-blue text-white"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Expenses
+            </button>
+            <button
+              onClick={() => setMode("income")}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "income"
+                  ? "bg-accent-blue text-white"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Income
+            </button>
+          </div>
         </CardHeader>
         <CardContent className="flex h-[250px] items-center justify-center">
           <div className="text-center">
-            <p className="text-sm text-muted-foreground">No expense data</p>
+            <p className="text-sm text-muted-foreground">No {mode} data</p>
             <p className="mt-1 text-xs text-muted-foreground/60">Upload statements to see category breakdown</p>
           </div>
         </CardContent>
@@ -88,8 +127,30 @@ export function CategoryPieChart({ data: rawData }: CategoryPieChartProps) {
       transition={{ duration: 0.4, delay: 0.2 }}
     >
       <Card className="h-full">
-        <CardHeader>
-          <CardTitle className="text-lg font-bold">Spending by Category</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+          <CardTitle className="text-lg font-bold">Category Breakdown</CardTitle>
+          <div className="inline-flex rounded-lg border border-border p-1">
+            <button
+              onClick={() => setMode("expenses")}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "expenses"
+                  ? "bg-accent-blue text-white"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Expenses
+            </button>
+            <button
+              onClick={() => setMode("income")}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "income"
+                  ? "bg-accent-blue text-white"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Income
+            </button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="h-[350px] w-full">
@@ -108,11 +169,12 @@ export function CategoryPieChart({ data: rawData }: CategoryPieChartProps) {
 
               // Link Labels (the lines outside)
               arcLinkLabelsSkipAngle={0}
-              arcLinkLabelsTextColor="var(--foreground)" // Use CSS variable for theme support
+              arcLinkLabelsTextColor={textColor}
               arcLinkLabelsThickness={2}
-              arcLinkLabelsColor={{ from: "color" }}
-              arcLinkLabelsDiagonalLength={24} // Increased from 12
-              arcLinkLabelsStraightLength={30} // Increased from 14
+              arcLinkLabelsColor={linkColor}
+              arcLinkLabelsDiagonalLength={24}
+              arcLinkLabelsStraightLength={30}
+              arcLinkLabelsTextOffset={6}
 
               // Slice Labels (text inside slices) only if slice is big enough
               arcLabelsSkipAngle={10}
@@ -123,14 +185,21 @@ export function CategoryPieChart({ data: rawData }: CategoryPieChartProps) {
               // Make sure text colors work in dark mode by using theme
               theme={{
                 text: {
-                  fill: "hsl(var(--foreground))",
+                  fill: textColor,
                   fontSize: 14,
                   fontWeight: 600,
                 },
+                labels: {
+                  text: {
+                    fill: textColor,
+                    fontSize: 14,
+                    fontWeight: 600,
+                  },
+                },
                 tooltip: {
                   container: {
-                    background: "hsl(var(--popover))",
-                    color: "hsl(var(--popover-foreground))",
+                    background: isDark ? "#2d3748" : "#ffffff",
+                    color: textColor,
                     fontSize: "12px",
                     borderRadius: "6px",
                     boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",

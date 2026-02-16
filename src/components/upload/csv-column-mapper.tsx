@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -22,24 +22,15 @@ interface CSVColumnMapperProps {
 const UNMAPPED = "__unmapped__";
 
 export function CSVColumnMapper({ headers, onConfirm, onCancel }: CSVColumnMapperProps) {
-  const [date, setDate] = useState(UNMAPPED);
-  const [description, setDescription] = useState(UNMAPPED);
-  const [amount, setAmount] = useState(UNMAPPED);
-  const [credit, setCredit] = useState(UNMAPPED);
-  const [debit, setDebit] = useState(UNMAPPED);
-  const [useSeparate, setUseSeparate] = useState(false);
+  // Auto-detect columns once on mount
+  const detected = useMemo(() => autoDetectColumns(headers), [headers]);
 
-  useEffect(() => {
-    const detected = autoDetectColumns(headers);
-    if (detected.date) setDate(detected.date);
-    if (detected.description) setDescription(detected.description);
-    if (detected.amount) setAmount(detected.amount);
-    if (detected.credit && detected.debit) {
-      setCredit(detected.credit);
-      setDebit(detected.debit);
-      setUseSeparate(true);
-    }
-  }, [headers]);
+  const [date, setDate] = useState(() => detected.date || UNMAPPED);
+  const [description, setDescription] = useState(() => detected.description || UNMAPPED);
+  const [amount, setAmount] = useState(() => detected.amount || UNMAPPED);
+  const [credit, setCredit] = useState(() => detected.credit || UNMAPPED);
+  const [debit, setDebit] = useState(() => detected.debit || UNMAPPED);
+  const [useSeparate, setUseSeparate] = useState(() => !!(detected.credit && detected.debit));
 
   const isValid = useSeparate
     ? date !== UNMAPPED && description !== UNMAPPED && credit !== UNMAPPED && debit !== UNMAPPED

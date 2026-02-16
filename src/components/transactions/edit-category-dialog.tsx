@@ -17,11 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createClient } from "@/lib/supabase/client";
-import type { Database } from "@/lib/types/database.types";
-
-type Category = Database["public"]["Tables"]["categories"]["Row"];
-type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
+import type { Category, Transaction } from "@/lib/types/database.types";
 
 interface EditCategoryDialogProps {
   open: boolean;
@@ -55,17 +51,14 @@ export function EditCategoryDialog({
     setSaving(true);
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
       // Update transaction category
-      const { error } = await supabase
-        .from("transactions")
-        .update({ category_id: categoryId })
-        .eq("id", transaction.id);
+      const updateRes = await fetch(`/api/transactions/${transaction.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category_id: categoryId }),
+      });
 
-      if (error) throw new Error(error.message);
+      if (!updateRes.ok) throw new Error("Failed to update category");
 
       // Create persistent rule if checked
       if (createRule) {
@@ -75,15 +68,17 @@ export function EditCategoryDialog({
           ? transaction.description.trim()
           : words.slice(0, 2).join(" ");
 
-        const { error: ruleErr } = await supabase
-          .from("category_rules")
-          .upsert(
-            { user_id: user.id, category_id: categoryId, pattern: pattern.toLowerCase() },
-            { onConflict: "user_id,pattern" }
-          );
+        const ruleRes = await fetch("/api/category-rules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category_id: categoryId,
+            pattern: pattern.toLowerCase(),
+          }),
+        });
 
-        if (ruleErr) {
-          toast.error(`Category saved but rule failed: ${ruleErr.message}`);
+        if (!ruleRes.ok) {
+          toast.error("Category saved but rule failed");
         } else {
           toast.success("Category updated and rule created");
         }

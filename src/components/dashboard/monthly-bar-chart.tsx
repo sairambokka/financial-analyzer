@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useEffect } from "react";
+import { useTheme } from "next-themes";
 import {
   BarChart,
   Bar,
@@ -32,6 +34,16 @@ interface MonthlyBarChartProps {
 }
 
 export function MonthlyBarChart({ data }: MonthlyBarChartProps) {
+  const { theme, systemTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isDark = mounted && (theme === "dark" || (theme === "system" && systemTheme === "dark"));
+  const textColor = isDark ? "#ffffff" : "#1f2937";
+
   if (data.length === 0) {
     return (
       <Card className="flex-1">
@@ -62,9 +74,16 @@ export function MonthlyBarChart({ data }: MonthlyBarChartProps) {
         <CardContent>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={data}>
-              <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+              <XAxis
+                dataKey="month"
+                stroke="hsl(var(--border))"
+                tick={{ fill: textColor, fontSize: 12 }}
+                tickLine={{ stroke: "hsl(var(--border))" }}
+              />
               <YAxis
-                tick={{ fontSize: 12 }}
+                stroke="hsl(var(--border))"
+                tick={{ fill: textColor, fontSize: 12 }}
+                tickLine={{ stroke: "hsl(var(--border))" }}
                 tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
               />
               <Tooltip

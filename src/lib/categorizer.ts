@@ -1,8 +1,5 @@
 import type { ParsedTransaction, CategorizedTransaction } from "@/lib/types/parsing.types";
-import type { Database } from "@/lib/types/database.types";
-
-type CategoryRule = Database["public"]["Tables"]["category_rules"]["Row"];
-type Category = Database["public"]["Tables"]["categories"]["Row"];
+import type { CategoryRule, Category } from "@/lib/types/database.types";
 
 export function categorizeTransactions(
   transactions: ParsedTransaction[],

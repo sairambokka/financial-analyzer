@@ -2,46 +2,29 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { Key, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { FileUploadZone } from "./file-upload-zone";
 import { TransactionPreviewTable } from "./transaction-preview-table";
-import { ApiKeyDialog } from "./api-key-dialog";
 import { extractTextFromPDF, structureWithClaude } from "@/lib/parsers/pdf-parser";
 import { categorizeTransactions } from "@/lib/categorizer";
-import { uploadStatementFile } from "@/lib/storage";
-import { createClient } from "@/lib/supabase/client";
-import { useApiKey } from "@/hooks/use-api-key";
 import type { CategorizedTransaction } from "@/lib/types/parsing.types";
-import type { Database } from "@/lib/types/database.types";
-
-type CategoryRule = Database["public"]["Tables"]["category_rules"]["Row"];
-type Category = Database["public"]["Tables"]["categories"]["Row"];
+import type { CategoryRule, Category } from "@/lib/types/database.types";
 
 type Step = "upload" | "extracting" | "preview";
 
 interface PDFUploadFlowProps {
-  userId: string;
   rules: CategoryRule[];
   categories: Category[];
   onComplete: () => void;
 }
 
-export function PDFUploadFlow({ userId, rules, categories, onComplete }: PDFUploadFlowProps) {
-  const { apiKey, setApiKey, clearApiKey, hasKey } = useApiKey();
+export function PDFUploadFlow({ rules, categories, onComplete }: PDFUploadFlowProps) {
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [transactions, setTransactions] = useState<CategorizedTransaction[]>([]);
   const [saving, setSaving] = useState(false);
-  const [keyDialogOpen, setKeyDialogOpen] = useState(false);
 
   async function handleFile(f: File) {
-    if (!hasKey) {
-      setKeyDialogOpen(true);
-      toast.error("Please configure your Anthropic API key first");
-      return;
-    }
-
     setFile(f);
     setStep("extracting");
 
@@ -52,7 +35,7 @@ export function PDFUploadFlow({ userId, rules, categories, onComplete }: PDFUplo
       }
 
       const categoryNames = categories.map((c) => c.name);
-      const parsed = await structureWithClaude(text, apiKey, categoryNames);
+      const parsed = await structureWithClaude(text, categoryNames);
       if (parsed.length === 0) {
         throw new Error("No transactions found in the PDF");
       }
@@ -70,31 +53,43 @@ export function PDFUploadFlow({ userId, rules, categories, onComplete }: PDFUplo
     if (!file) return;
     setSaving(true);
     try {
-      const supabase = createClient();
-
-      const { data: stmt, error: stmtErr } = await supabase
-        .from("statements")
-        .insert({
-          user_id: userId,
+      // Create statement record
+      const stmtRes = await fetch("/api/statements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           file_name: file.name,
           file_type: "pdf",
           period_start: transactions.length > 0 ? transactions[transactions.length - 1].date : null,
           period_end: transactions.length > 0 ? transactions[0].date : null,
-        })
-        .select("id")
-        .single();
+        }),
+      });
 
-      if (stmtErr || !stmt) throw new Error(stmtErr?.message ?? "Failed to create statement");
+      if (!stmtRes.ok) throw new Error("Failed to create statement");
+      const stmt = await stmtRes.json();
 
-      const storagePath = await uploadStatementFile(supabase, userId, stmt.id, file);
+      // Upload file to storage
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("statementId", stmt.id);
 
-      await supabase
-        .from("statements")
-        .update({ storage_path: storagePath })
-        .eq("id", stmt.id);
+      const uploadRes = await fetch("/api/uploads", {
+        method: "POST",
+        body: formData,
+      });
 
+      if (!uploadRes.ok) throw new Error("Failed to upload file");
+      const { storage_path } = await uploadRes.json();
+
+      // Update statement with storage path
+      await fetch("/api/statements", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: stmt.id, storage_path }),
+      });
+
+      // Bulk insert transactions
       const txInserts = transactions.map((tx) => ({
-        user_id: userId,
         statement_id: stmt.id,
         date: tx.date,
         description: tx.description,
@@ -104,8 +99,13 @@ export function PDFUploadFlow({ userId, rules, categories, onComplete }: PDFUplo
         raw_text: tx.raw_text,
       }));
 
-      const { error: txErr } = await supabase.from("transactions").insert(txInserts);
-      if (txErr) throw new Error(txErr.message);
+      const txRes = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(txInserts),
+      });
+
+      if (!txRes.ok) throw new Error("Failed to save transactions");
 
       toast.success(`Saved ${transactions.length} transactions`);
       reset();
@@ -125,14 +125,6 @@ export function PDFUploadFlow({ userId, rules, categories, onComplete }: PDFUplo
 
   return (
     <>
-      <ApiKeyDialog
-        open={keyDialogOpen}
-        onOpenChange={setKeyDialogOpen}
-        currentKey={apiKey}
-        onSave={setApiKey}
-        onClear={clearApiKey}
-      />
-
       {step === "extracting" && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <Loader2 className="mb-4 h-10 w-10 animate-spin text-blue-600" />
@@ -153,24 +145,12 @@ export function PDFUploadFlow({ userId, rules, categories, onComplete }: PDFUplo
       )}
 
       {step === "upload" && (
-        <div className="space-y-3">
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setKeyDialogOpen(true)}
-            >
-              <Key className="mr-1.5 h-3.5 w-3.5" />
-              {hasKey ? "API Key Configured" : "Set API Key"}
-            </Button>
-          </div>
-          <FileUploadZone
-            accept=".pdf"
-            onFile={handleFile}
-            label="Drop your PDF statement here"
-            description="Uses AI to extract transactions from bank/credit card PDFs"
-          />
-        </div>
+        <FileUploadZone
+          accept=".pdf"
+          onFile={handleFile}
+          label="Drop your PDF statement here"
+          description="Uses AI to extract transactions from bank/credit card PDFs"
+        />
       )}
     </>
   );

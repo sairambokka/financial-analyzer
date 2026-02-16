@@ -7,24 +7,18 @@ import { CSVColumnMapper } from "./csv-column-mapper";
 import { TransactionPreviewTable } from "./transaction-preview-table";
 import { parseCSVFile, mapRowsToTransactions } from "@/lib/parsers/csv-parser";
 import { categorizeTransactions } from "@/lib/categorizer";
-import { uploadStatementFile } from "@/lib/storage";
-import { createClient } from "@/lib/supabase/client";
 import type { ParsedRow, ColumnMappings, CategorizedTransaction } from "@/lib/types/parsing.types";
-import type { Database } from "@/lib/types/database.types";
-
-type CategoryRule = Database["public"]["Tables"]["category_rules"]["Row"];
-type Category = Database["public"]["Tables"]["categories"]["Row"];
+import type { CategoryRule, Category } from "@/lib/types/database.types";
 
 type Step = "upload" | "map" | "preview";
 
 interface CSVUploadFlowProps {
-  userId: string;
   rules: CategoryRule[];
   categories: Category[];
   onComplete: () => void;
 }
 
-export function CSVUploadFlow({ userId, rules, categories, onComplete }: CSVUploadFlowProps) {
+export function CSVUploadFlow({ rules, categories, onComplete }: CSVUploadFlowProps) {
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [headers, setHeaders] = useState<string[]>([]);
@@ -63,37 +57,43 @@ export function CSVUploadFlow({ userId, rules, categories, onComplete }: CSVUplo
     if (!file) return;
     setSaving(true);
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
-      // Insert statement record
-      const { data: stmt, error: stmtErr } = await supabase
-        .from("statements")
-        .insert({
-          user_id: userId,
+      // Create statement record
+      const stmtRes = await fetch("/api/statements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           file_name: file.name,
           file_type: "csv",
           period_start: transactions.length > 0 ? transactions[transactions.length - 1].date : null,
           period_end: transactions.length > 0 ? transactions[0].date : null,
-        })
-        .select("id")
-        .single();
+        }),
+      });
 
-      if (stmtErr || !stmt) throw new Error(stmtErr?.message ?? "Failed to create statement");
+      if (!stmtRes.ok) throw new Error("Failed to create statement");
+      const stmt = await stmtRes.json();
 
       // Upload file to storage
-      const storagePath = await uploadStatementFile(supabase, userId, stmt.id, file);
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("statementId", stmt.id);
+
+      const uploadRes = await fetch("/api/uploads", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadRes.ok) throw new Error("Failed to upload file");
+      const { storage_path } = await uploadRes.json();
 
       // Update statement with storage path
-      await supabase
-        .from("statements")
-        .update({ storage_path: storagePath })
-        .eq("id", stmt.id);
+      await fetch("/api/statements", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: stmt.id, storage_path }),
+      });
 
       // Bulk insert transactions
       const txInserts = transactions.map((tx) => ({
-        user_id: userId,
         statement_id: stmt.id,
         date: tx.date,
         description: tx.description,
@@ -103,8 +103,13 @@ export function CSVUploadFlow({ userId, rules, categories, onComplete }: CSVUplo
         raw_text: tx.raw_text,
       }));
 
-      const { error: txErr } = await supabase.from("transactions").insert(txInserts);
-      if (txErr) throw new Error(txErr.message);
+      const txRes = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(txInserts),
+      });
+
+      if (!txRes.ok) throw new Error("Failed to save transactions");
 
       toast.success(`Saved ${transactions.length} transactions`);
       reset();

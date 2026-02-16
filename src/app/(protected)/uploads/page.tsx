@@ -10,16 +10,9 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CSVUploadFlow } from "@/components/upload/csv-upload-flow";
 import { PDFUploadFlow } from "@/components/upload/pdf-upload-flow";
-import { createClient } from "@/lib/supabase/client";
-import { deleteStatementFile } from "@/lib/storage";
-import type { Database } from "@/lib/types/database.types";
-
-type Statement = Database["public"]["Tables"]["statements"]["Row"];
-type CategoryRule = Database["public"]["Tables"]["category_rules"]["Row"];
-type Category = Database["public"]["Tables"]["categories"]["Row"];
+import type { Statement, CategoryRule, Category } from "@/lib/types/database.types";
 
 export default function UploadsPage() {
-  const [userId, setUserId] = useState<string | null>(null);
   const [statements, setStatements] = useState<Statement[]>([]);
   const [rules, setRules] = useState<CategoryRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -27,35 +20,15 @@ export default function UploadsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const [stmtRes, ruleRes, catRes] = await Promise.all([
+        fetch("/api/statements"),
+        fetch("/api/category-rules"),
+        fetch("/api/categories"),
+      ]);
 
-      setUserId(user.id);
-
-      const stmtRes = await supabase
-        .from("statements")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("upload_date", { ascending: false })
-        .returns<Statement[]>();
-
-      const ruleRes = await supabase
-        .from("category_rules")
-        .select("*")
-        .eq("user_id", user.id)
-        .returns<CategoryRule[]>();
-
-      const catRes = await supabase
-        .from("categories")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name")
-        .returns<Category[]>();
-
-      if (stmtRes.data) setStatements(stmtRes.data);
-      if (ruleRes.data) setRules(ruleRes.data);
-      if (catRes.data) setCategories(catRes.data);
+      if (stmtRes.ok) setStatements(await stmtRes.json());
+      if (ruleRes.ok) setRules(await ruleRes.json());
+      if (catRes.ok) setCategories(await catRes.json());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -69,20 +42,11 @@ export default function UploadsPage() {
 
   async function handleDeleteStatement(stmt: Statement) {
     try {
-      const supabase = createClient();
+      const res = await fetch(`/api/statements/${stmt.id}`, {
+        method: "DELETE",
+      });
 
-      // Delete file from storage if it exists
-      if (stmt.storage_path) {
-        await deleteStatementFile(supabase, stmt.storage_path);
-      }
-
-      // Delete statement (cascades to transactions)
-      const { error } = await supabase
-        .from("statements")
-        .delete()
-        .eq("id", stmt.id);
-
-      if (error) throw new Error(error.message);
+      if (!res.ok) throw new Error("Failed to delete");
 
       setStatements((prev) => prev.filter((s) => s.id !== stmt.id));
       toast.success("Statement and its transactions deleted");
@@ -100,8 +64,6 @@ export default function UploadsPage() {
     );
   }
 
-  if (!userId) return null;
-
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Upload Statements</h1>
@@ -116,7 +78,6 @@ export default function UploadsPage() {
           <Card>
             <CardContent className="pt-6">
               <CSVUploadFlow
-                userId={userId}
                 rules={rules}
                 categories={categories}
                 onComplete={fetchData}
@@ -129,7 +90,6 @@ export default function UploadsPage() {
           <Card>
             <CardContent className="pt-6">
               <PDFUploadFlow
-                userId={userId}
                 rules={rules}
                 categories={categories}
                 onComplete={fetchData}

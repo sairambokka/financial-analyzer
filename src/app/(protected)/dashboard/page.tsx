@@ -2,66 +2,60 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { SummaryCards } from "@/components/dashboard/summary-cards";
 import { CategoryPieChart } from "@/components/dashboard/category-pie-chart";
 import { MonthlyBarChart } from "@/components/dashboard/monthly-bar-chart";
+import { CategoryTrendChart } from "@/components/dashboard/category-trend-chart";
+import { ForecastChart } from "@/components/dashboard/forecast-chart";
 import { DateRangeFilter, type DateRange } from "@/components/dashboard/date-range-filter";
 import { TransactionList } from "@/components/transactions/transaction-list";
-import { createClient } from "@/lib/supabase/client";
+import { RecurringTransactions } from "@/components/insights/recurring-transactions";
+import { SpendingAnomalies } from "@/components/insights/spending-anomalies";
+import { TopMerchants } from "@/components/insights/top-merchants";
 import {
-  calcSummary,
+  calcEnhancedSummary,
   calcCategoryBreakdown,
+  calcIncomeBreakdown,
   calcMonthlyTrend,
+  calcCategoryTrends,
+  calcSpendingForecast,
+  calcTopMerchants,
+  detectRecurringTransactions,
+  detectAnomalies,
   filterByDateRange,
 } from "@/lib/analytics";
-import type { Database } from "@/lib/types/database.types";
-
-type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
-type Category = Database["public"]["Tables"]["categories"]["Row"];
+import type { Transaction, Category } from "@/lib/types/database.types";
+import { AnimatePresence, motion } from "framer-motion";
 
 export default function DashboardPage() {
-  const [userId, setUserId] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRange>({ start: null, end: null });
+  const [insightsExpanded, setInsightsExpanded] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) return;
-
-        setUserId(user.id);
-
         const [txRes, catRes] = await Promise.all([
-          supabase
-            .from("transactions")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("date", { ascending: false })
-            .limit(5000)
-            .returns<Transaction[]>(),
-          supabase
-            .from("categories")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("name")
-            .returns<Category[]>(),
+          fetch("/api/transactions?limit=5000"),
+          fetch("/api/categories"),
         ]);
 
-        if (txRes.error) throw new Error(txRes.error.message);
-        if (catRes.error) throw new Error(catRes.error.message);
+        if (!txRes.ok || !catRes.ok) {
+          throw new Error("Failed to load data");
+        }
 
-        setTransactions(txRes.data);
-        setCategories(catRes.data);
+        const txData = await txRes.json();
+        const catData = await catRes.json();
+
+        setTransactions(txData);
+        setCategories(catData);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to load dashboard data");
       } finally {
@@ -76,12 +70,26 @@ export default function DashboardPage() {
     [transactions, dateRange]
   );
 
-  const summary = useMemo(() => calcSummary(filtered, categories), [filtered, categories]);
-  const categoryBreakdown = useMemo(
+  const summary = useMemo(
+    () => calcEnhancedSummary(transactions, filtered, categories),
+    [transactions, filtered, categories]
+  );
+  const expenseBreakdown = useMemo(
     () => calcCategoryBreakdown(filtered, categories),
     [filtered, categories]
   );
+  const incomeBreakdown = useMemo(
+    () => calcIncomeBreakdown(filtered, categories),
+    [filtered, categories]
+  );
   const monthlyTrend = useMemo(() => calcMonthlyTrend(filtered, categories), [filtered, categories]);
+  const categoryTrends = useMemo(() => calcCategoryTrends(filtered, categories), [filtered, categories]);
+
+  // Insights (computed from all transactions, not filtered)
+  const recurringGroups = useMemo(() => detectRecurringTransactions(transactions, categories), [transactions, categories]);
+  const anomalies = useMemo(() => detectAnomalies(transactions, categories), [transactions, categories]);
+  const topMerchants = useMemo(() => calcTopMerchants(filtered, categories), [filtered, categories]);
+  const forecast = useMemo(() => calcSpendingForecast(transactions, categories), [transactions, categories]);
 
   if (loading) {
     return (
@@ -99,8 +107,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
-  if (!userId) return null;
 
   if (transactions.length === 0) {
     return (
@@ -120,21 +126,97 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
-
-      <DateRangeFilter value={dateRange} onChange={setDateRange} />
-
-      <SummaryCards summary={summary} />
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <CategoryPieChart data={categoryBreakdown} />
-        <MonthlyBarChart data={monthlyTrend} />
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Your financial overview and insights
+          </p>
+        </div>
+        <DateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
-      <Separator />
+      {/* Summary Cards */}
+      <SummaryCards summary={summary} />
 
-      <TransactionList userId={userId} />
+      {/* Charts Section */}
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold mb-4">Analysis</h2>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <CategoryPieChart expenseData={expenseBreakdown} incomeData={incomeBreakdown} />
+            <MonthlyBarChart data={monthlyTrend} />
+          </div>
+        </div>
+
+        <CategoryTrendChart data={categoryTrends} />
+      </div>
+
+      {/* Insights Section */}
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold">Insights & Analytics</h2>
+            <p className="text-sm text-muted-foreground">
+              Advanced patterns, trends, and forecasting
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setInsightsExpanded(!insightsExpanded)}
+            className="w-full sm:w-auto"
+          >
+            {insightsExpanded ? (
+              <>
+                <ChevronUp className="mr-2 h-4 w-4" />
+                Collapse
+              </>
+            ) : (
+              <>
+                <ChevronDown className="mr-2 h-4 w-4" />
+                Expand
+              </>
+            )}
+          </Button>
+        </div>
+
+        <AnimatePresence>
+          {insightsExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.3 }}
+              className="space-y-4 overflow-hidden"
+            >
+              <div className="grid auto-rows-fr gap-4 lg:grid-cols-2">
+                <RecurringTransactions data={recurringGroups} />
+                <TopMerchants data={topMerchants} />
+              </div>
+              <div className="grid auto-rows-fr gap-4 lg:grid-cols-2">
+                <SpendingAnomalies data={anomalies} />
+                <ForecastChart data={forecast} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <Separator className="my-8" />
+
+      {/* Transactions Section */}
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-xl font-bold">Transactions</h2>
+          <p className="text-sm text-muted-foreground">
+            {filtered.length} transaction{filtered.length !== 1 ? "s" : ""} in selected period
+          </p>
+        </div>
+        <TransactionList externalTransactions={filtered} externalCategories={categories} />
+      </div>
     </div>
   );
 }

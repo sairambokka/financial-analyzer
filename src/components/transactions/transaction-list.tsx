@@ -23,19 +23,19 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EditCategoryDialog } from "./edit-category-dialog";
-import { createClient } from "@/lib/supabase/client";
-import type { Database } from "@/lib/types/database.types";
-
-type Transaction = Database["public"]["Tables"]["transactions"]["Row"];
-type Category = Database["public"]["Tables"]["categories"]["Row"];
+import type { Transaction, Category } from "@/lib/types/database.types";
 
 const ALL = "__all__";
 
 interface TransactionListProps {
-  userId: string;
+  externalTransactions?: Transaction[];
+  externalCategories?: Category[];
 }
 
-export function TransactionList({ userId }: TransactionListProps) {
+export function TransactionList({
+  externalTransactions,
+  externalCategories,
+}: TransactionListProps = {}) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,36 +44,36 @@ export function TransactionList({ userId }: TransactionListProps) {
   const [editTx, setEditTx] = useState<Transaction | null>(null);
 
   const fetchData = useCallback(async () => {
+    // If external data is provided, use it instead of fetching
+    if (externalTransactions && externalCategories) {
+      setTransactions(externalTransactions);
+      setCategories(externalCategories);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      const supabase = createClient();
+      const [txRes, catRes] = await Promise.all([
+        fetch("/api/transactions?limit=500"),
+        fetch("/api/categories"),
+      ]);
 
-      const txRes = await supabase
-        .from("transactions")
-        .select("*")
-        .eq("user_id", userId)
-        .order("date", { ascending: false })
-        .limit(500)
-        .returns<Transaction[]>();
+      if (!txRes.ok || !catRes.ok) {
+        throw new Error("Failed to load data");
+      }
 
-      const catRes = await supabase
-        .from("categories")
-        .select("*")
-        .eq("user_id", userId)
-        .order("name")
-        .returns<Category[]>();
+      const txData = await txRes.json();
+      const catData = await catRes.json();
 
-      if (txRes.error) throw new Error(txRes.error.message);
-      if (catRes.error) throw new Error(catRes.error.message);
-
-      setTransactions(txRes.data);
-      setCategories(catRes.data);
+      setTransactions(txData);
+      setCategories(catData);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load transactions");
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [externalTransactions, externalCategories]);
 
   useEffect(() => {
     fetchData();
@@ -81,9 +81,12 @@ export function TransactionList({ userId }: TransactionListProps) {
 
   async function handleDelete(txId: string) {
     try {
-      const supabase = createClient();
-      const { error } = await supabase.from("transactions").delete().eq("id", txId);
-      if (error) throw new Error(error.message);
+      const res = await fetch(`/api/transactions?id=${txId}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) throw new Error("Failed to delete");
+
       setTransactions((prev) => prev.filter((t) => t.id !== txId));
       toast.success("Transaction deleted");
     } catch (err) {
